@@ -143,6 +143,88 @@ def format_message_for_reddit(msg):
     return title, text, symbol, link, reply_count
 
 
+def classify(messages):
+    """Classify messages into positions and commentary.
+
+    - Positions: messages with explicit position (bullish/bearish) and a symbol we track.
+    - Commentary: everything else.
+    """
+    positions = []
+    commentary = []
+
+    for m in messages:
+        if not isinstance(m, dict):
+            continue
+
+        # Safely extract reply count from conversation.replies (may be int/list/missing)
+        conv = m.get("conversation")
+        if isinstance(conv, dict):
+            replies_raw = conv.get("replies", 0)
+            if isinstance(replies_raw, int):
+                reply_count = replies_raw
+            elif isinstance(replies_raw, list):
+                reply_count = len(replies_raw)
+            else:
+                reply_count = 0
+        else:
+            reply_count = 0
+
+        msg = {
+            "id": m.get("id"),
+            "body": m.get("body", ""),
+            "created_at": m.get("created_at", ""),
+            "user": m.get("user", {}).get("username", "unknown"),
+            "symbols": [s.get("symbol") for s in m.get("symbols", []) if s.get("symbol")],
+            "sentiment": m.get("entities", {}).get("sentiment", {}).get("basic"),
+            "replies": reply_count,
+        }
+
+        symbols = msg["symbols"]
+        sentiment = msg["sentiment"]
+
+        if symbols and any(sym in SYMBOL_SET for sym in symbols) and sentiment in ("Bullish", "Bearish"):
+            positions.append(msg)
+        else:
+            commentary.append(msg)
+
+    return positions, commentary
+
+
+def format_hourly_summary(positions, commentary, hour_start: datetime, hour_end: datetime):
+    lines = [
+        f"StockTwits Hourly Summary",
+        f"Period: {hour_start.strftime('%Y-%m-%d %H:%M')} – {hour_end.strftime('%Y-%m-%d %H:%M')} UTC",
+        "",
+        f"Total messages: {len(positions) + len(commentary)}",
+        f"Positions: {len(positions)}",
+        f"Commentary: {len(commentary)}",
+        "",
+        "## Positions",
+        "",
+    ]
+
+    if not positions:
+        lines.append("_No position messages in this hour._")
+    else:
+        for p in positions:
+            lines.append(
+                f"- **{p['symbols'][0]}** ({p['sentiment']}) by {p['user']} at {p['created_at']}: {p['body'][:120]}…"
+            )
+
+    lines.extend(["", "## Commentary", ""])
+
+    if not commentary:
+        lines.append("_No commentary messages in this hour._")
+    else:
+        for c in commentary:
+            syms = ", ".join(c["symbols"]) if c["symbols"] else "(no symbols)"
+            lines.append(
+                f"- **{syms}** by {c['user']} at {c['created_at']}: {c['body'][:120]}…"
+            )
+
+    return "\n".join(lines)
+
+
 def main():
     print("Starting hourly Stocktwits fetch...")
     cursor = {}
@@ -163,6 +245,14 @@ def main():
         time.sleep(1)
 
     print(f"Fetched {len(all_messages)} messages.")
+
+    positions, commentary = classify(all_messages)
+    now = datetime.now(timezone.utc)
+    hour_start = now.replace(minute=0, second=0, microsecond=0)
+    hour_end = hour_start
+
+    summary = format_hourly_summary(positions, commentary, hour_start, hour_end)
+    print(summary)
 
     for msg in all_messages:
         title, text, symbol, link, reply_count = format_message_for_reddit(msg)
