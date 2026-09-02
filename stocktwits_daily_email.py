@@ -16,6 +16,11 @@ TARGET_USER = "chartistmind"
 WINDOW_HOURS = 24
 ET = ZoneInfo("America/New_York")
 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "Accept": "application/json",
+}
+
 GMAIL_USERNAME = os.getenv("GMAIL_USERNAME")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 TO_EMAIL = os.getenv("TO_EMAIL") or GMAIL_USERNAME
@@ -55,7 +60,12 @@ def fetch_user_messages(user, window_hours=WINDOW_HOURS, max_pages=20):
         if max_id:
             params["max"] = max_id
 
-        res = requests.get(f"{STOCKTWITS_API}/streams/user/{user}.json", params=params, timeout=30)
+        res = requests.get(
+            f"{STOCKTWITS_API}/streams/user/{user}.json",
+            params=params,
+            headers=HEADERS,
+            timeout=30,
+        )
         res.raise_for_status()
         data = res.json()
         batch = data.get("messages", [])
@@ -129,7 +139,15 @@ def main():
     try:
         messages = fetch_user_messages(TARGET_USER)
     except requests.HTTPError as e:
+        status = e.response.status_code if e.response is not None else "unknown"
         print(f"StockTwits API error: {e}")
+        if status in (401, 403):
+            if STOCKTWITS_ACCESS_TOKEN:
+                print("The STOCKTWITS_ACCESS_TOKEN secret was rejected. Generate a fresh token and update the secret.")
+            else:
+                print("StockTwits blocked the unauthenticated request from this runner.")
+                print("Fix: create a free app at https://api.stocktwits.com/developers, copy its access token,")
+                print("add it as the STOCKTWITS_ACCESS_TOKEN repository secret, then re-run this workflow.")
         sys.exit(1)
     epoch = datetime.min.replace(tzinfo=timezone.utc)
     messages.sort(key=lambda m: parse_ts(m.get("created_at")) or epoch, reverse=True)

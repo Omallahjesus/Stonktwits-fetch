@@ -14,6 +14,11 @@ REDDIT_USER_AGENT = "StocktwitsToReddit/1.0 by u/YourRedditUsername"
 REDDIT_ACCESS_TOKEN = None
 TOKEN_EXPIRY = None
 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "Accept": "application/json",
+}
+
 SYMBOLS_TO_MONITOR = [
     "SPY",
     "AAPL",
@@ -76,7 +81,12 @@ def get_stocktwits_messages(symbols, since=None, max_id=None, limit=50):
     if max_id:
         params["max"] = max_id
 
-    res = requests.get(f"{STOCKTWITS_API}/streams/symbol.json", params=params)
+    res = requests.get(
+        f"{STOCKTWITS_API}/streams/symbol.json",
+        params=params,
+        headers=HEADERS,
+        timeout=30,
+    )
     res.raise_for_status()
     data = res.json()
     return data.get("cursor", {}), data.get("messages", [])
@@ -138,7 +148,13 @@ def format_message_for_reddit(msg):
     user = msg.get("user", {}).get("username", "unknown")
     created = msg.get("created_at", "")
     link = msg.get("links", [{}])[0].get("url", "")
-    symbol = msg.get("symbols", [{}])[0].get("symbol", "UNKNOWN")
+    symbols = msg.get("symbols", [])
+    if symbols and isinstance(symbols[0], dict):
+        symbol = symbols[0].get("symbol", "UNKNOWN")
+    elif symbols:
+        symbol = symbols[0]
+    else:
+        symbol = "UNKNOWN"
     reply_count = normalize_reply_count(msg)
 
     title = f"{symbol}: {body[:200]}"
@@ -169,20 +185,27 @@ def classify(messages):
         else:
             reply_count = 0
 
+        symbols = []
+        for s in m.get("symbols", []):
+            if isinstance(s, str):
+                symbols.append(s)
+            elif isinstance(s, dict) and s.get("symbol"):
+                symbols.append(s["symbol"])
+
         msg = {
             "id": m.get("id"),
             "body": m.get("body", ""),
             "created_at": m.get("created_at", ""),
             "user": m.get("user", {}).get("username", "unknown"),
-            "symbols": [s.get("symbol") for s in m.get("symbols", []) if s.get("symbol")],
+            "symbols": symbols,
             "sentiment": m.get("entities", {}).get("sentiment", {}).get("basic"),
             "replies": reply_count,
         }
 
-        symbols = msg["symbols"]
+        syms = msg["symbols"]
         sentiment = msg["sentiment"]
 
-        if symbols and any(sym in SYMBOL_SET for sym in symbols) and sentiment in ("Bullish", "Bearish"):
+        if syms and any(sym in SYMBOL_SET for sym in syms) and sentiment in ("Bullish", "Bearish"):
             positions.append(msg)
         else:
             commentary.append(msg)
