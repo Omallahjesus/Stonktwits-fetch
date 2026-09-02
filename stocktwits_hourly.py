@@ -7,9 +7,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 STOCKTWITS_API = "https://api.stocktwits.com/api/2"
-STOCKTWITS_ACCESS_TOKEN = os.getenv("STOCKTWITS_ACCESS_TOKEN")
-REDDIT_CLIENT_ID = os.getenv("REDDIT_CLIENT_ID")
-REDDIT_CLIENT_SECRET = os.getenv("REDDIT_CLIENT_SECRET")
+STOCKTWITS_ACCESS_TOKEN = os.getenv("STOCKTWITS_ACCESS_TOKEN")  # optional
+REDDIT_CLIENT_ID = os.getenv("REDDIT_CLIENT_ID")  # optional
+REDDIT_CLIENT_SECRET = os.getenv("REDDIT_CLIENT_SECRET")  # optional
 REDDIT_USER_AGENT = "StocktwitsToReddit/1.0 by u/YourRedditUsername"
 REDDIT_ACCESS_TOKEN = None
 TOKEN_EXPIRY = None
@@ -40,6 +40,10 @@ SYMBOLS_TO_MONITOR = [
 SYMBOL_SET = set(SYMBOLS_TO_MONITOR)
 
 
+def reddit_enabled():
+    return bool(REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET)
+
+
 def get_reddit_access_token():
     global REDDIT_ACCESS_TOKEN, TOKEN_EXPIRY
     if REDDIT_ACCESS_TOKEN and TOKEN_EXPIRY and time.time() < TOKEN_EXPIRY:
@@ -62,7 +66,9 @@ def get_reddit_access_token():
 
 
 def get_stocktwits_messages(symbols, since=None, max_id=None, limit=50):
-    params = {"access_token": STOCKTWITS_ACCESS_TOKEN, "limit": limit}
+    params = {"limit": limit}
+    if STOCKTWITS_ACCESS_TOKEN:
+        params["access_token"] = STOCKTWITS_ACCESS_TOKEN
     if symbols:
         params["symbols"] = ",".join(symbols)
     if since:
@@ -77,12 +83,9 @@ def get_stocktwits_messages(symbols, since=None, max_id=None, limit=50):
 
 
 def normalize_reply_count(msg):
-    """Safely extract reply count from StockTwits message.
+    """Safely extract reply count from a StockTwits message.
 
-    StockTwits may return 'replies' as:
-      - an integer (e.g. 3)
-      - a list of reply objects (e.g. [{...}, {...}])
-    This helper returns an int in both cases.
+    'replies' may be an int (e.g. 3) or a list of reply objects.
     """
     replies = msg.get("replies", 0)
     if isinstance(replies, int):
@@ -98,7 +101,7 @@ def post_to_reddit(title, text, symbol, message_url, subreddit="stonks"):
         "Authorization": f"Bearer {token}",
         "User-Agent": REDDIT_USER_AGENT,
     }
-    url = f"https://oauth.reddit.com/api/submit"
+    url = "https://oauth.reddit.com/api/submit"
     data = {
         "api_type": "json",
         "sr": subreddit,
@@ -119,7 +122,7 @@ def post_to_reddit(title, text, symbol, message_url, subreddit="stonks"):
     )
     post_url = f"https://www.reddit.com/r/{subreddit}/comments/{post_id}/"
     requests.post(
-        f"https://oauth.reddit.com/api/comment",
+        "https://oauth.reddit.com/api/comment",
         headers=headers,
         data={
             "api_type": "json",
@@ -144,10 +147,8 @@ def format_message_for_reddit(msg):
 
 
 def classify(messages):
-    """Classify messages into positions and commentary.
-
-    - Positions: messages with explicit position (bullish/bearish) and a symbol we track.
-    - Commentary: everything else.
+    """Split messages into positions (bullish/bearish on a tracked symbol)
+    and commentary (everything else).
     """
     positions = []
     commentary = []
@@ -156,7 +157,6 @@ def classify(messages):
         if not isinstance(m, dict):
             continue
 
-        # Safely extract reply count from conversation.replies (may be int/list/missing)
         conv = m.get("conversation")
         if isinstance(conv, dict):
             replies_raw = conv.get("replies", 0)
@@ -192,8 +192,8 @@ def classify(messages):
 
 def format_hourly_summary(positions, commentary, hour_start: datetime, hour_end: datetime):
     lines = [
-        f"StockTwits Hourly Summary",
-        f"Period: {hour_start.strftime('%Y-%m-%d %H:%M')} – {hour_end.strftime('%Y-%m-%d %H:%M')} UTC",
+        "StockTwits Hourly Summary",
+        f"Period: {hour_start.strftime('%Y-%m-%d %H:%M')} - {hour_end.strftime('%Y-%m-%d %H:%M')} UTC",
         "",
         f"Total messages: {len(positions) + len(commentary)}",
         f"Positions: {len(positions)}",
@@ -208,7 +208,7 @@ def format_hourly_summary(positions, commentary, hour_start: datetime, hour_end:
     else:
         for p in positions:
             lines.append(
-                f"- **{p['symbols'][0]}** ({p['sentiment']}) by {p['user']} at {p['created_at']}: {p['body'][:120]}…"
+                f"- **{p['symbols'][0]}** ({p['sentiment']}) by {p['user']} at {p['created_at']}: {p['body'][:120]}"
             )
 
     lines.extend(["", "## Commentary", ""])
@@ -219,7 +219,7 @@ def format_hourly_summary(positions, commentary, hour_start: datetime, hour_end:
         for c in commentary:
             syms = ", ".join(c["symbols"]) if c["symbols"] else "(no symbols)"
             lines.append(
-                f"- **{syms}** by {c['user']} at {c['created_at']}: {c['body'][:120]}…"
+                f"- **{syms}** by {c['user']} at {c['created_at']}: {c['body'][:120]}"
             )
 
     return "\n".join(lines)
@@ -227,16 +227,25 @@ def format_hourly_summary(positions, commentary, hour_start: datetime, hour_end:
 
 def main():
     print("Starting hourly Stocktwits fetch...")
+    if STOCKTWITS_ACCESS_TOKEN:
+        print("Using authenticated StockTwits API access.")
+    else:
+        print("No STOCKTWITS_ACCESS_TOKEN set - using public (unauthenticated) API access.")
+
     cursor = {}
     all_messages = []
 
     while True:
-        cursor, messages = get_stocktwits_messages(
-            SYMBOLS_TO_MONITOR,
-            since=cursor.get("since"),
-            max_id=cursor.get("max"),
-            limit=50,
-        )
+        try:
+            cursor, messages = get_stocktwits_messages(
+                SYMBOLS_TO_MONITOR,
+                since=cursor.get("since"),
+                max_id=cursor.get("max"),
+                limit=50,
+            )
+        except requests.HTTPError as e:
+            print(f"StockTwits API error: {e}. Stopping fetch.")
+            break
         if not messages:
             break
         all_messages.extend(messages)
@@ -249,21 +258,23 @@ def main():
     positions, commentary = classify(all_messages)
     now = datetime.now(timezone.utc)
     hour_start = now.replace(minute=0, second=0, microsecond=0)
-    hour_end = hour_start
 
-    summary = format_hourly_summary(positions, commentary, hour_start, hour_end)
+    summary = format_hourly_summary(positions, commentary, hour_start, hour_start)
     print(summary)
 
-    for msg in all_messages:
-        title, text, symbol, link, reply_count = format_message_for_reddit(msg)
-        if reply_count > 0:
-            print(f"Skipping message with {reply_count} replies: {link}")
-            continue
-        try:
-            post_url = post_to_reddit(title, text, symbol, link)
-            print(f"Posted to Reddit: {post_url}")
-        except Exception as e:
-            print(f"Error posting to Reddit: {e}")
+    if reddit_enabled():
+        for msg in all_messages:
+            title, text, symbol, link, reply_count = format_message_for_reddit(msg)
+            if reply_count > 0:
+                print(f"Skipping message with {reply_count} replies: {link}")
+                continue
+            try:
+                post_url = post_to_reddit(title, text, symbol, link)
+                print(f"Posted to Reddit: {post_url}")
+            except Exception as e:
+                print(f"Error posting to Reddit: {e}")
+    else:
+        print("Reddit credentials not set - skipping cross-posting.")
 
     print("Done.")
 
