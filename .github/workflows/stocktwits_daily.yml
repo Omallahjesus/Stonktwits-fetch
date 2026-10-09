@@ -1,10 +1,9 @@
-name: StockTwits Daily Email Summary
+name: StockTwits Summary Email
 
 on:
   schedule:
-    - cron: '0 2 * * *'   # 10:00 PM ET when the US is on EDT
-    - cron: '0 3 * * *'   # 10:00 PM ET when the US is on EST
-  workflow_dispatch:      # manual test run (always sends)
+    - cron: '0 */4 * * *'   # every 4 hours = 6x/day (8 AM, 12 PM, 4 PM, 8 PM, 12 AM, 4 AM ET during EDT)
+  workflow_dispatch:        # manual run sends immediately
 
 jobs:
   email-summary:
@@ -31,5 +30,4 @@ jobs:
           GMAIL_USERNAME: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           TO_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
-          FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
         run: python stocktwits_daily_email.py
