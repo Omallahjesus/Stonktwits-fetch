@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 import stocktwits_daily_email as daily
 
-TARGET_USERS = ("chartistmind", "momobull")
+TARGET_USERS = ("chartistmind", "momobull", "EderT", "machumble")
 
 
 def main():
